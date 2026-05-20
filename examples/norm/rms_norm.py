@@ -2,7 +2,6 @@ import tilelang
 import tilelang.language as T
 import torch
 import os
-import torch.nn.functional as F
 
 ALIGNMENT = 256
 
@@ -36,8 +35,8 @@ def _rms_norm_kernel(M, N, eps, dtype):
 
                 # Compute x^2 in fp32
                 for i, j in T.Parallel(block_m, N_padded):
-                    xsq_f32[i, j] = (
-                        T.cast(x_local[i, j], "float32") * T.cast(x_local[i, j], "float32")
+                    xsq_f32[i, j] = T.cast(x_local[i, j], "float32") * T.cast(
+                        x_local[i, j], "float32"
                     )
 
                 # Sum of squares along hidden dim
@@ -50,9 +49,11 @@ def _rms_norm_kernel(M, N, eps, dtype):
 
                 # y = x * rrms * weight, result stored back in x_local
                 for i, j in T.Parallel(block_m, N_padded):
-                    x_local[i, j] = T.cast((
-                        T.cast(x_local[i, j], "float32") * rrms[i, 0] * T.cast(weight[j], "float32")
-                    ), "float16")
+                    x_local[i, j] = (
+                        T.cast(x_local[i, j], "float32")
+                        * rrms[i, 0]
+                        * T.cast(weight[j], "float32")
+                    )
 
                 # Write output
                 T.copy(x_local, shared_buf)
@@ -61,6 +62,60 @@ def _rms_norm_kernel(M, N, eps, dtype):
         return main
 
     return _func
+
+
+def _rms_norm_kernel_high_perf(M, N, eps, dtype):
+    N_padded = _align_up(N, ALIGNMENT)
+
+    @tilelang.jit(out_idx=[2], target="npuir")
+    def _func_high_perf(block_m, block_n):
+
+        @T.prim_func
+        def high_perf(
+            x: T.Tensor[(M, N_padded), dtype],
+            weight: T.Tensor[(N_padded,), dtype],
+            y: T.Tensor[(M, N_padded), dtype],
+        ):
+            with T.Kernel(T.ceildiv(M, block_m)) as pid_m:
+                x_tile = T.alloc_shared((block_m, block_n), "float32")
+                xsq_tile = T.alloc_shared((block_m, block_n), "float32")
+                w_tile = T.alloc_shared((block_n,), "float32")
+                y_tile = T.alloc_shared((block_m, block_n), "float32")
+
+                sq_val = T.alloc_fragment((block_m, 1), "float32")
+                sumsq = T.alloc_fragment((block_m, 1), "float32")
+                rrms = T.alloc_fragment((block_m, 1), "float32")
+
+                for no in T.serial(T.ceildiv(N_padded, block_n)):
+                    n_start = no * block_n
+                    T.copy(x[pid_m * block_m, n_start], x_tile)
+
+                    for i, j in T.Parallel(block_m, block_n):
+                        xsq_tile[i, j] = x_tile[i, j] * x_tile[i, j]
+
+                    T.reduce_sum(xsq_tile, sq_val, dim=1)
+                    for i in T.Parallel(block_m):
+                        sumsq[i, 0] += sq_val[i, 0]
+
+                for i in T.Parallel(block_m):
+                    rrms[i, 0] = sumsq[i, 0] / float(N) + eps
+                T.vrsqrt(rrms, rrms)
+
+                for no in T.serial(T.ceildiv(N_padded, block_n)):
+                    n_start = no * block_n
+
+                    T.copy(x[pid_m * block_m, n_start], x_tile)
+                    T.copy(weight[n_start], w_tile)
+
+                    for i, j in T.Parallel(block_m, block_n):
+                        y_tile[i, j] = x_tile[i, j] * rrms[i, 0] * w_tile[j]
+
+                    T.copy(y_tile, y[pid_m * block_m, n_start])
+
+        return high_perf
+
+    return _func_high_perf
+
 
 def rms_norm_ref(x, weight, eps):
     x_f32 = x.float()
@@ -71,7 +126,8 @@ def rms_norm_ref(x, weight, eps):
 def run_test(
     M=4096,
     N=4096,
-    block_m=4,
+    block_m=64,
+    block_n=64,
     eps=1e-5,
     dtype="float16",
     device="npu",
@@ -89,10 +145,10 @@ def run_test(
     x = torch.zeros((M, n_padded), dtype=torch_dtype, device=device)
     x[:, :N] = torch.randn((M, N), dtype=torch_dtype, device=device)
     weight = torch.randn((n_padded,), dtype=torch_dtype, device=device)
-   
+
     y_ref = rms_norm_ref(x, weight, eps)
-    program = _rms_norm_kernel(M, N, eps, dtype)
-    y = program(block_m)(x, weight)
+    program = _rms_norm_kernel_high_perf(M, N, eps, dtype)
+    y = program(block_m, block_n)(x, weight)
 
     torch.testing.assert_close(y.float(), y_ref.float(), atol=atol, rtol=rtol)
     print("\033[32;1mPass!\033[0m")
