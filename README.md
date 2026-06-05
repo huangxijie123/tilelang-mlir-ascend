@@ -188,14 +188,14 @@ export ACL_OP_INIT_MODE=1
 Pull the code
 
 ```shell
-git clone https://github.com/tile-ai/tilelang-ascend.git --recursive
+git clone https://github.com/tile-ai/tilelang-mlir-ascend.git --recursive
 ```
 
 <!-- 执行安装脚本 -->
 Run the installation script
 
 ```shell
-cd tilelang-ascend
+cd tilelang-mlir-ascend
 # build AscendNPU-IR in 3rdparty
 bash install_npuir.sh
 # Alternative way of building with local AscendNPU-IR

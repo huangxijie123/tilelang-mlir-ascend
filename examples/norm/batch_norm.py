@@ -47,9 +47,9 @@ def _batch_norm_kernel(C, L, eps, dtype):
                 for i, j in T.Parallel(block_c, L):
                     x_local[i, j] = (
                         T.cast(x_local[i, j], "float32") - mean[i, 0]
-                    ) * rstd[i, 0] * T.cast(weight[i], "float32") + T.cast(
-                        bias[i], "float32"
-                    )
+                    ) * rstd[i, 0] * T.cast(
+                        weight[pid_c * block_c + i], "float32"
+                    ) + T.cast(bias[pid_c * block_c + i], "float32")
 
                 T.copy(x_local, shared_buf)
                 T.copy(shared_buf, y[pid_c * block_c, 0])
@@ -107,11 +107,13 @@ def _batch_norm_kernel_high_perf(C, L, eps, dtype):
                     var_val[i, 0] = acc[i, 0] / float(L) + eps
                 T.vrsqrt(var_val, rstd)
 
+                T.copy(weight[pid_c * block_c], w_tile)
+                T.copy(bias[pid_c * block_c], b_tile)
+
                 for no in T.serial(T.ceildiv(L, block_l)):
                     d_start = no * block_l
                     T.copy(x[pid_c * block_c, d_start], x_tile)
-                    T.copy(weight[pid_c * block_c], w_tile)
-                    T.copy(bias[pid_c * block_c], b_tile)
+
                     for i, j in T.Parallel(block_c, block_l):
                         y_tile[i, j] = (x_tile[i, j] - mean_val[i, 0]) * rstd[
                             i, 0
@@ -153,7 +155,7 @@ def run_test(
         "bfloat16": torch.bfloat16,
     }[dtype]
 
-    x = torch.zeros((C, L), dtype=torch_dtype, device=device)
+    x = torch.randn((C, L), dtype=torch_dtype, device=device)
     rm = torch.zeros((C), dtype=torch_dtype, device=device)
     rv = torch.zeros((C), dtype=torch_dtype, device=device)
     weight = torch.randn((C), dtype=torch_dtype, device=device)
