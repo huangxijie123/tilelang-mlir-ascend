@@ -1,8 +1,9 @@
 import torch
 import os
 
-from group_norm import  group_norm_ref as instance_norm_ref
-from group_norm import  _group_norm_kernel_high_perf as _instance_norm_kernel_high_perf
+from group_norm import group_norm_ref as instance_norm_ref
+from group_norm import _group_norm_kernel_high_perf as _instance_norm_kernel_high_perf
+
 
 def run_test(
     N=2048,
