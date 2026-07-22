@@ -86,10 +86,17 @@ class NPUUtils(object):
         """
         return cls()
 
+    @staticmethod
+    def _raise_if_load_failed(loaded, name):
+        if loaded is None:
+            raise RuntimeError(f"Failed to load NPU kernel binary: {name}")
+
     def load_binary(self, name, kernel, shared, device, mix_mode):
-        return self.npu_utils_mod.load_kernel_binary(
+        loaded = self.npu_utils_mod.load_kernel_binary(
             name, kernel, shared, device, mix_mode
         )
+        self._raise_if_load_failed(loaded, name)
+        return loaded
 
     @functools.lru_cache()
     def get_arch(self):

@@ -1,24 +1,23 @@
 # Copyright (c) Tile-AI Corporation.
 # Licensed under the MIT License.
+import os
+import filecmp
 
-import torch
 import tilelang
 import tilelang.language as T
 
-torch.manual_seed(1234)
 tilelang.cache.clear_cache()
 
-M = 16
-N = 16
-BLOCK_M = 8
-BLOCK_N = 8
-DTYPE = "float16"
+M = 512
+N = 512
+CLAMP_MIN = -1.0
+CLAMP_MAX = 1.0
 
 
-def kernel_log2(M, N, block_M, block_N, dtype="float16"):
+def vec_clamp(M, N, block_M, block_N, dtype="float16"):
     m_num = M // block_M
     n_num = N // block_N
-    BLOCK_SIZE = 8
+    BLOCK_SIZE = 16
 
     @T.prim_func
     def main(
@@ -28,8 +27,6 @@ def kernel_log2(M, N, block_M, block_N, dtype="float16"):
         with T.Kernel(BLOCK_SIZE, is_npu=True) as (cid, _):
             A_VEC = T.alloc_ub((block_M, block_N), dtype)
             B_VEC = T.alloc_ub((block_M, block_N), dtype)
-            Tmp = T.alloc_ub((block_M, block_N), dtype)
-
             for i in T.serial(T.ceildiv(m_num * n_num, BLOCK_SIZE)):
                 block_id = i * BLOCK_SIZE + cid
                 if block_id < m_num * n_num:
@@ -37,30 +34,27 @@ def kernel_log2(M, N, block_M, block_N, dtype="float16"):
                     block_id_n = block_id % n_num
                     bx = block_id_m * block_M
                     by = block_id_n * block_N
-
                     T.copy(A[bx, by], A_VEC)
-                    T.vlog2(A_VEC, B_VEC, Tmp)
+                    T.vclamp(A_VEC, B_VEC, CLAMP_MIN, CLAMP_MAX)
                     T.copy(B_VEC, B[bx, by])
 
     return main
 
 
-def test_kernel_log2():
-    func = kernel_log2(M, N, BLOCK_M, BLOCK_N, DTYPE)
-    compiled_kernel = tilelang.compile(func, target="npuir")
+def test_vec_clamp():
+    func = vec_clamp(M, N, 128, 256)
+    kernel = tilelang.engine.lower(func, target="npuir")
 
-    A = torch.abs(torch.randn((M, N), dtype=torch.float16)) + 0.01
-    A = A.npu()
-    B = torch.zeros((M, N), dtype=torch.float16).npu()
+    curr_name = os.path.splitext(os.path.basename(__file__))[0][5:] + ".mlir"
+    output_file = "./output/" + curr_name
+    os.makedirs("./output", exist_ok=True)
+    with open(output_file, "w") as f:
+        f.write(kernel)
 
-    compiled_kernel(A, B)
-
-    A_cpu = A.cpu()
-    ref_cpu = torch.log2(A_cpu)
-
-    torch.testing.assert_close(B.cpu(), ref_cpu, rtol=1e-3, atol=1e-3)
-    print("\033[92mLog2 kernel accuracy check passed!\033[0m")
+    ref_file = "./mlir_files/" + curr_name
+    are_identical = filecmp.cmp(output_file, ref_file, shallow=False)
+    assert are_identical, f"'{output_file}' and '{ref_file}' are not identical"
 
 
 if __name__ == "__main__":
-    test_kernel_log2()
+    test_vec_clamp()

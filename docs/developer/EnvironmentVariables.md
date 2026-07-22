@@ -29,6 +29,7 @@ export TILELANG_DUMP_IR=TRUE
 | Variable | Default | Description | Valid Values |
 |----------|---------|-------------|--------------|
 | `TILELANG_ASCEND_MODE` | `Expert` | Set the TileLang Mode; currently, Expert mode and Developer mode are supported | `Expert`: Expert Mode<br>`Developer`: Developer Mode |
+| `TILELANG_ENABLE_SIMT` | `1` | Control whether the TVM/TIR pipeline runs A5 SIMT lowering before SIMD vectorization | True values: `1`, `true`, `t`, `yes`, `y`, `on`<br>False values: `0`, `false`, `f`, `no`, `n`, `off` |
 | `TILELANG_ASCEND_DEVICE_NAME` | `Ascend910B` | Override the target device name for compilation (e.g. for cross-compilation). If not set, runtime hardware detection is used. | String, e.g., `Ascend910B`|
 
 ## Autotuner

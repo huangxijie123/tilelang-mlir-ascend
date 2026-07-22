@@ -17,8 +17,13 @@ $PYTHON --version
 USE_LLVM=false
 ENABLE_TESTS=OFF
 BISHENGIR_PATH=""
+TARGET="A2/A3"
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --build-a5)
+            TARGET="A5"
+            shift
+            ;;
         --enable-llvm)
             USE_LLVM=true
             shift
@@ -131,18 +136,37 @@ echo "Cloning TVM repository and initializing submodules..."
 # clone and build tvm
 git submodule update --init --recursive 3rdparty/tvm
 
+CORES=$(nproc)
+MAKE_JOBS=$(( CORES * 75 / 100 ))
+
 if [ -z "$BISHENGIR_PATH" ]; then
     echo "warring: no --bishengir-path set, bishengir path will be found in environment variable PATH"
     # build bishengir in 3rdparty
     echo "build bishengir in 3rdparty"
-    git submodule update --init --recursive 3rdparty/AscendNPU-IR
-    pushd 3rdparty/AscendNPU-IR
-    bash ./build-tools/apply_patches.sh
-    rm -rf ./build
-    ./build-tools/build.sh -o ./build --python-binding --c-compiler=clang --cxx-compiler=clang++ \
-    --add-cmake-options="-DCMAKE_LINKER=lld -DLLVM_ENABLE_LLD=ON -DLLVM_ENABLE_RTTI=ON" --apply-patches --bishengir-publish=off
-    BISHENGIR_PATH="./3rdparty/AscendNPU-IR/build/install"
-    popd
+    if [ "$TARGET" = "A5" ]; then
+        echo "Building for Ascend A5 platform with AscendNPU-IR-Dev..."
+        git submodule update --init --recursive 3rdparty/AscendNPU-IR-Dev
+        pushd 3rdparty/AscendNPU-IR-Dev
+        rm -rf ./build
+        mkdir build
+        ./build-tools/build.sh --c-compiler clang --cxx-compiler clang++ \
+        --add-cmake-options="-DCMAKE_LINKER=lld -DLLVM_ENABLE_LLD=ON -DLLVM_ENABLE_RTTI=ON" --build-type Release -j${MAKE_JOBS} --enable-assertion \
+        --disable-werror --disable-mlir-werror --disable-bishengir-werror --build-triton \
+        --build ./build   --apply-patches --python-binding
+        BISHENGIR_PATH="./3rdparty/AscendNPU-IR-Dev/build/install"
+        popd
+    else
+        echo "Building for Ascend A2/A3 platform with AscendNPU-IR..."
+        git submodule update --init --recursive 3rdparty/AscendNPU-IR
+        pushd 3rdparty/AscendNPU-IR
+        bash ./build-tools/apply_patches.sh
+        rm -rf ./build
+        mkdir build
+        ./build-tools/build.sh -o ./build --python-binding --c-compiler=clang --cxx-compiler=clang++ \
+        --add-cmake-options="-DCMAKE_LINKER=lld -DLLVM_ENABLE_LLD=ON -DLLVM_ENABLE_RTTI=ON" --apply-patches --bishengir-publish=off
+        BISHENGIR_PATH="./3rdparty/AscendNPU-IR/build/install"
+        popd
+    fi
 fi
 
 if [ -d build ]; then
@@ -157,7 +181,7 @@ echo "set(USE_NPUIR ON)" >> config.cmake
 echo "set(BISHENGIR_ROOT_PATH $BISHENGIR_PATH)" >> config.cmake
 
 echo "Running CMake for TileLang..."
-cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DPython3_EXECUTABLE="$PYTHON" -DMLIR_INCLUDE_TESTS=${ENABLE_TESTS} ..
+cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DPython3_EXECUTABLE="$PYTHON" -DMLIR_INCLUDE_TESTS=${ENABLE_TESTS} -DTILELANG_NPUIR_TARGET=${TARGET} -DCMAKE_CXX_FLAGS="-I$(pwd)/3rdparty/AscendNPU-IR-Dev/third-party/triton/include -I$(pwd)/3rdparty/tvm/3rdparty/triton/python" ..
 if [ $? -ne 0 ]; then
     echo "Error: CMake configuration failed."
     exit 1
@@ -168,8 +192,6 @@ echo "Building TileLang with make..."
 # Calculate 75% of available CPU cores
 # Other wise, make will use all available cores
 # and it may cause the system to be unresponsive
-CORES=$(nproc)
-MAKE_JOBS=$(( CORES * 75 / 100 ))
 make -j${MAKE_JOBS}
 
 if [ $? -ne 0 ]; then

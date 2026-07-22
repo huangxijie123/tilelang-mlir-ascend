@@ -409,6 +409,33 @@ def npuir_not(A, B):
     return AscendUnaryOp("not", A, B).buildTirCall()
 
 
+def npuir_floor(A, B):
+    """Element-wise floor: B = floor(A).
+
+    Args:
+        A: Input tensor
+        B: Output tensor
+
+    Returns:
+        tir.Call: The TIR call for the floor operation
+    """
+    return AscendUnaryOp("floor", A, B).buildTirCall()
+
+
+def npuir_floordiv(A, B, C):
+    """Element-wise floor division: C = floor(A / B).
+
+    Args:
+        A: First input tensor
+        B: Second input tensor or scalar value
+        C: Output tensor
+
+    Returns:
+        tir.Call: The TIR call for the floor division operation
+    """
+    return AscendBinaryOp("floordiv", A, B, C).buildTirCall()
+
+
 def npuir_exp2(A, B, Tmp):
     """Compute exp2(A) = exp(A * ln(2)).
 

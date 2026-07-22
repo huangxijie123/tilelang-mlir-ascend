@@ -93,6 +93,10 @@ from .customize_npuir import (
     npuir_shl as vshl,  # noqa: F401
     npuir_shr,  # noqa: F401
     npuir_shr as vshr,  # noqa: F401
+    npuir_floor,  # noqa: F401
+    npuir_floor as vfloor,  # noqa: F401
+    npuir_floordiv,  # noqa: F401
+    npuir_floordiv as vfloordiv,  # noqa: F401
     npuir_exp,  # noqa: F401
     npuir_exp as vexp,  # noqa: F401
     npuir_dot,  # noqa: F401

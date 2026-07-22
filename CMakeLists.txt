@@ -30,6 +30,28 @@ elseif(EXISTS ${CMAKE_SOURCE_DIR}/config.cmake)
   include(${CMAKE_SOURCE_DIR}/config.cmake)
 endif()
 
+# Normalize the optional Ascend target selector used by NPUIR source gating.
+set(TILE_LANG_NPUIR_TARGET "")
+if(DEFINED TILELANG_NPUIR_TARGET)
+  set(TILE_LANG_NPUIR_TARGET "${TILELANG_NPUIR_TARGET}")
+elseif(DEFINED TILELANG_ASCEND_TARGET)
+  set(TILE_LANG_NPUIR_TARGET "${TILELANG_ASCEND_TARGET}")
+elseif(DEFINED TARGET)
+  set(TILE_LANG_NPUIR_TARGET "${TARGET}")
+elseif(DEFINED ENV{TILELANG_NPUIR_TARGET})
+  set(TILE_LANG_NPUIR_TARGET "$ENV{TILELANG_NPUIR_TARGET}")
+elseif(DEFINED ENV{TILELANG_ASCEND_TARGET})
+  set(TILE_LANG_NPUIR_TARGET "$ENV{TILELANG_ASCEND_TARGET}")
+elseif(DEFINED ENV{TILELANG_ASCEND_DEVICE_NAME})
+  set(TILE_LANG_NPUIR_TARGET "$ENV{TILELANG_ASCEND_DEVICE_NAME}")
+endif()
+
+string(TOUPPER "${TILE_LANG_NPUIR_TARGET}" TILE_LANG_NPUIR_TARGET_UPPER)
+set(TILE_LANG_ENABLE_NPUIR_A5 OFF)
+if(TILE_LANG_NPUIR_TARGET_UPPER STREQUAL "A5")
+  set(TILE_LANG_ENABLE_NPUIR_A5 ON)
+endif()
+
 # Enforce C++ standard
 set(CMAKE_CXX_STANDARD 17)
 
@@ -60,6 +82,41 @@ if(USE_NPUIR)
     list(INSERT CMAKE_PREFIX_PATH 0 ${BISHENGIR_ROOT_PATH})
     find_package(MLIR REQUIRED CONFIG)
     list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}" "${LLVM_CMAKE_DIR}")
+  endif()
+  set(TRITON_INCLUDE_DIR
+    "${PROJECT_SOURCE_DIR}/3rdparty/AscendNPU-IR-Dev/third-party/triton/include"
+    CACHE PATH "Path to Triton headers required by AscendNPU-IR"
+  )
+  set(TRITON_BINARY_INCLUDE_DIR
+    "${PROJECT_SOURCE_DIR}/3rdparty/AscendNPU-IR-Dev/build/tools/triton/include"
+    CACHE PATH "Path to generated Triton headers required by AscendNPU-IR"
+  )
+  set(TRITON_BIN_INCLUDE_DIR
+    "${PROJECT_SOURCE_DIR}/3rdparty/AscendNPU-IR-Dev/third-party/triton/bin"
+    CACHE PATH "Path to Triton registration headers required by AscendNPU-IR"
+  )
+  set(TRITON_THIRD_PARTY_INCLUDE_DIR
+    "${PROJECT_SOURCE_DIR}/3rdparty/AscendNPU-IR-Dev/third-party/triton/third_party"
+    CACHE PATH "Path to Triton third-party headers required by AscendNPU-IR"
+  )
+  set(TRITON_THIRD_PARTY_BINARY_INCLUDE_DIR
+    "${PROJECT_SOURCE_DIR}/3rdparty/AscendNPU-IR-Dev/build/tools/triton/third_party"
+    CACHE PATH "Path to generated Triton third-party headers required by AscendNPU-IR"
+  )
+  if(EXISTS "${TRITON_INCLUDE_DIR}/triton/Dialect/TritonGPU/IR/Dialect.h")
+    list(APPEND BISHENGIR_INCLUDE_DIRS "${TRITON_INCLUDE_DIR}")
+  endif()
+  if(EXISTS "${TRITON_BINARY_INCLUDE_DIR}/triton/Dialect/Triton/IR/Dialect.h.inc")
+    list(APPEND BISHENGIR_INCLUDE_DIRS "${TRITON_BINARY_INCLUDE_DIR}")
+  endif()
+  if(EXISTS "${TRITON_BIN_INCLUDE_DIR}/RegisterTritonDialects.h")
+    list(APPEND BISHENGIR_INCLUDE_DIRS "${TRITON_BIN_INCLUDE_DIR}")
+  endif()
+  if(EXISTS "${TRITON_THIRD_PARTY_INCLUDE_DIR}/nvidia/include/Dialect/NVGPU/IR/Dialect.h")
+    list(APPEND BISHENGIR_INCLUDE_DIRS "${TRITON_THIRD_PARTY_INCLUDE_DIR}")
+  endif()
+  if(EXISTS "${TRITON_THIRD_PARTY_BINARY_INCLUDE_DIR}/nvidia/include/Dialect/NVGPU/IR/Dialect.h.inc")
+    list(APPEND BISHENGIR_INCLUDE_DIRS "${TRITON_THIRD_PARTY_BINARY_INCLUDE_DIR}")
   endif()
   message(STATUS "BISHENGIR_INCLUDE_DIRS: ${BISHENGIR_INCLUDE_DIRS}")
   message(STATUS "BISHENGIR_LIBRARY_DIRS: ${BISHENGIR_LIBRARY_DIRS}")
@@ -154,12 +211,21 @@ endif()
 
 # Include NPUIR source files if NPUIR is enabled
 if(USE_NPUIR)
-  tilelang_file_glob(GLOB TILE_LANG_NPUIR_SRCS
-    src/target/codegen_npuir.cc
-    src/target/codegen_npuir_api.cc
-    src/target/codegen_npuir_dev.cc
-    src/target/rt_mod_npuir.cc
-  )
+  if(TILE_LANG_ENABLE_NPUIR_A5)
+    tilelang_file_glob(GLOB TILE_LANG_NPUIR_SRCS
+      src/target/codegen_npuir.cc
+      src/target/codegen_npuir_api_a5.cc
+      src/target/codegen_npuir_dev_a5.cc
+      src/target/rt_mod_npuir.cc
+    )
+  else()
+    tilelang_file_glob(GLOB TILE_LANG_NPUIR_SRCS
+      src/target/codegen_npuir.cc
+      src/target/codegen_npuir_api.cc
+      src/target/codegen_npuir_dev.cc
+      src/target/rt_mod_npuir.cc
+    )
+  endif()
   list(APPEND TILE_LANG_SRCS ${TILE_LANG_NPUIR_SRCS})
 endif()
 
@@ -226,6 +292,9 @@ set(TILE_LANG_COMPILE_DEFS
   __STDC_FORMAT_MACROS=1
   PICOJSON_USE_INT64
 )
+if(TILE_LANG_ENABLE_NPUIR_A5)
+  list(APPEND TILE_LANG_COMPILE_DEFS TILELANG_ENABLE_NPUIR_A5=1)
+endif()
 
 # Set target properties for object library
 target_include_directories(tilelang_objs PRIVATE ${TILE_LANG_INCLUDES})
@@ -254,11 +323,11 @@ target_link_libraries(
   tilelang_module
   PUBLIC
   tvm
-  zstd
-  z
   -Wl,--start-group
   ${NPUIR_LIBS}
   -Wl,--end-group
+  zstd
+  z
 )
 if(USE_NPUIR)
   # TODO: Use Tilelangir Dialect in tilelang_module
